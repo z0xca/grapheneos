@@ -1,4 +1,4 @@
-rooted-graphene
+GrapheneOS
 ===
 
 > [!IMPORTANT]
