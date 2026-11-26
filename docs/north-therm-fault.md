@@ -2,16 +2,18 @@
 
 ## Summary
 
-The Pixel 8 Pro (`husky`) has a faulty temperature sensor path. The sensor is `north_therm`. At rest it reads too cold. At random times it reads a false 55 to 58 °C for less than 7 seconds. The thermal software treats these false readings as real heat. The result was "phone is too warm" notices, short stutters and, from 16 September, thermal shutdowns. The patched build (see [patched-build-history.md](patched-build-history.md)) removes the sensor from the thermal formulas. The sensor itself is not repaired.
+This report describes one Pixel 8 Pro (`husky`) in August and September 2026. Times are local.
+
+The `north_therm` sensor path read too cold at rest. In the recorded events, it also gave false readings of 55 to 58 °C for less than 7 seconds. The thermal software treated these readings as real heat. This caused "phone is too warm" notices, short stutters, and thermal shutdowns. The [patched build](../modules/norththermrewire.py) replaces `north_therm` with `cam_therm` in the affected formulas. It does not repair the sensor.
 
 ## Symptoms
 
 - From 15 September, System UI showed the `high_temp` notice ("phone is too warm") about 50 times per day. The phone was idle and cool.
 - Sometimes a short stutter came with the notice. It never became a freeze.
 - On 15 September the phone ran GrapheneOS build 2026091001, security patch level 2026-09-01. No root.
-- From 16 September the phone did thermal shutdowns. On 21 September it did 5 shutdowns, about 3.5 minutes apart: boot, run, shut down.
+- Thermal shutdowns started on 16 September. The phone recorded five on 21 September.
 
-## The sensor
+## The sensor on the original build
 
 | Item | Value |
 |---|---|
@@ -21,20 +23,20 @@ The Pixel 8 Pro (`husky`) has a faulty temperature sensor path. The sensor is `n
 | Location | top of the phone, camera-bar region (inference, see below) |
 | Kernel trips | one passive trip at 125 °C. No critical trip. |
 
-**Location evidence.** Google's own thermal model gives `north_therm` the largest weight (0.14) in `VIRTUAL-BTS-WINDOW-PARTIAL`. That sensor window is the body-temperature IR sensor in the rear camera bar. The weight of `north_therm` is about 0 in every speaker formula. The speakers and USB-C port are at the bottom. No public teardown documents the sensor.
+**Location evidence.** In the stock thermal model examined, `north_therm` had the largest weight (0.14) in `VIRTUAL-BTS-WINDOW-PARTIAL`. This formula covers the body-temperature IR sensor in the rear camera bar. `north_therm` had almost no weight in the speaker formulas.
 
-**Best-supported placement.** The Google Service BOM for the Pixel 8 Pro (V4.2) lists an ANT1 sub-PCB (part G949-00706-01). It also lists a ZIF flat-flex cable from ANT1 to the logic board ("DIECUT, KAPTON, ANT1PCB ZIF"). The iFixit logic-board guide shows a press connector in the top-left corner. The best-supported placement of `north_therm` is on the ANT1 sub-PCB, read through its ZIF flex and the top-left interconnect. This is an inference. No document gives this location.
+**Possible placement.** The Google Service BOM for the Pixel 8 Pro (V4.2) lists an ANT1 sub-PCB (part G949-00706-01). It also lists a ZIF cable from ANT1 to the logic board ("DIECUT, KAPTON, ANT1PCB ZIF"). The iFixit logic-board guide shows a press connector in the top-left corner. These clues suggest the ANT1 sub-PCB as a possible location. The investigation did not verify the physical location.
 
 ## How a false reading causes a notice or a shutdown
 
-The vendor file `/vendor/etc/thermal_info_config.json` defines virtual sensors as weighted sums of real sensors:
+In the stock build used for the investigation, `/vendor/etc/thermal_info_config.json` defined these formulas:
 
 ```
 VIRTUAL-SKIN-SUB-4 = 0.9 × north_therm + 0.05 × soc_therm + 0.01 × neutral_therm + 0.73
 VIRTUAL-SKIN       = MAX(VIRTUAL-SKIN-SUB-0 … SUB-10)
 ```
 
-This formula reproduced the logged values to the decimal. `VIRTUAL-SKIN` has the type SKIN, which sets the thermal status of the whole phone:
+The formulas reproduced the logged values. In one capture, `north_therm` reached 54.94 °C and `VIRTUAL-SKIN` reached 52.56 °C. `VIRTUAL-SKIN` had the type SKIN. The investigation linked these thresholds to the observed thermal status:
 
 | VIRTUAL-SKIN | Status | Effect |
 |---|---|---|
@@ -49,21 +51,17 @@ A spike of `north_therm` to about 55 °C pushed `VIRTUAL-SKIN` to about 53 °C: 
 **Captures on 15 September.**
 - A 1-second poll of `dumpsys thermalservice` showed `north_therm` at 54.9 °C. All other sensors were at their cool baseline: soc 36.8, cam 32.1, usb 32.8, battery 32.1 °C.
 - The other 8 thermistors were steady. Their largest jump between readings was 1.6 °C. The jump of `north_therm` was 37 °C.
-- There were no kernel or ADC read errors. The sensor returned valid but false values. This points to hardware, not to a driver.
-- Spikes also occurred with the screen off (3 of 9). The fault is spontaneous.
-- Detection is event-driven. The HAL zone notice came 70 ms before each PowerUI event, so the count of about 8 per hour is a true count.
+- The logs showed no kernel or ADC read errors. The readings were well formed but inconsistent with the other sensors.
+- Three of nine recorded spikes occurred with the screen off.
+- The HAL zone notice preceded the PowerUI event by about 70 ms. The logs recorded about eight notices per hour during that capture. This count does not include spikes that did not cause a notice.
 
-**Why it started on 15 September: software was excluded.**
-- The September GrapheneOS releases (2026090500, 2026090700, 2026091000) contain no thermal, HAL or sensor changes.
-- The build date of the phone matched 2026091000, which was active from about 11 September.
-- No matching reports existed on the GrapheneOS tracker or forum.
-- Note: `ro.runtime.firstboot` changes at each boot. It does not show when a build was installed.
+**Software clues.** The GrapheneOS release notes reviewed at the time did not list changes to the thermal configuration, HAL, or sensor driver. The investigation found no matching reports on the tracker or forum. These observations favor a hardware fault but do not rule out every software cause.
 
 **Heat and spike rate: warm-up test (15 September, 22:40 to 22:50).**
 - An 8-thread load ran for 5 minutes. `soc_therm` reached 51 to 53 °C.
 - There were zero spikes during the test and 30 minutes with no spike overall.
-- Conclusion: board heat, screen-on, video and large power changes do not increase the spike rate.
-- `north_therm` rose from 15.5 to 19.9 °C with the board. The sensor is alive and tracks temperature. Only its path is degraded.
+- This short test did not reproduce a spike. It did not establish how heat or workload affects spike frequency.
+- `north_therm` rose from 15.5 to 19.9 °C as the board warmed. The sensor path still responded to heat.
 
 **Heat and spike height.** The spike height increased with the resting temperature of the sensor:
 
@@ -73,7 +71,7 @@ A spike of `north_therm` to about 55 °C pushed `VIRTUAL-SKIN` to about 53 °C: 
 | 17.5 °C | 55.2 °C |
 | about 19.7 °C | about 56.4 °C (VIRTUAL-SKIN 53.95 °C at 22:56 on 15 September, about 1 °C below shutdown) |
 
-Heat does not make spikes more frequent, but it makes them higher. Thus the shutdown risk is higher when the phone is warm.
+The sample was small, but higher baseline readings coincided with higher spikes.
 
 **Later readings.**
 - On 18 September the board was warm (soc 47, battery 38 °C, charging). `north_therm` was stable at about 26 °C and tracked the board, but read about 11 °C below the adjacent `cam_therm` (37 °C). There was no shutdown that day.
@@ -81,7 +79,7 @@ Heat does not make spikes more frequent, but it makes them higher. Thus the shut
 
 **Withdrawn claims.**
 - "All spikes go straight to status 5, so the fault is bistable." Withdrawn: PowerUI does not log statuses 1 to 4. A real status-1 event produced no log line.
-- "The USB drops on the evening of 15 September show a bad port." Withdrawn: GrapheneOS turns off USB data when the phone is locked. (A different fact, from 21 September: the USB link does drop when the phone moves on a cable.)
+- "The USB drops on the evening of 15 September show a bad port." Withdrawn: the USB configuration could cut the link when the phone locked. On 21 September, USB also disconnected when the phone moved while attached to a cable.
 - "Humidity triggers the spikes." Demoted: 15 September was cold and dry, and the humid day (Sunday, 13 September) had no spikes.
 
 ## Shutdown history
@@ -96,38 +94,33 @@ Heat does not make spikes more frequent, but it makes them higher. Thus the shut
 
 The 16 September event was an orderly framework shutdown of a phone at about 35 °C. Implied `north_therm` spike: 57.7 °C or more. After the reboot, the phone showed the notice "Phone turned off due to heat".
 
-## History and cause
+## Repair history and suspected cause
 
-**History.** On 7 August the phone fell into a sink for about 5 seconds. Then it was charged while the USB-C port was still wet. The phone failed. On each boot it showed an overheating message and shut down at the lock screen. A shop did a board-level micro-soldering repair of the charging circuit. The two bottom sensors near that repair (`usb_pwr_therm`, `charge_therm`) are the healthiest on the board.
+**History.** On 7 August the phone fell into a sink for about 5 seconds. It was then charged with the USB-C port still wet. On each boot it showed an overheating message and shut down at the lock screen. A shop repaired the charging circuit with board-level micro-soldering. The nearby sensors (`usb_pwr_therm` and `charge_therm`) gave stable readings during the later investigation.
 
-**Best-fit cause (final assessment, 21 September): electrochemical migration.**
-- The damage started when the phone charged with a wet port. Water, the charge voltage and ionic contamination together cause electrochemical migration and corrosion.
-- The fault shows two signatures on one sensor path. A too-cold rest reading means added series resistance. A too-hot spike means a parallel leakage path. Series resistance alone can only read colder.
-- One contaminated, electrochemically active joint explains both. It also explains the delay of about 5 weeks, the progression, and why only one high-impedance sensor line fails.
-- The NTC and the ADC are alive, because the reading tracks temperature in both directions. So a one-time electrical "zap" is not the current mechanism.
-- A badly seated connector after the repair can only add series resistance. It cannot cause hot spikes. It is at most a small contributor.
+**Working hypothesis (21 September): electrochemical migration.** The failure after charging with a wet port makes corrosion or contamination a plausible cause. Added series resistance can explain the cold offset. Intermittent leakage can explain the hot spikes. A contaminated connection can produce both effects. The investigation did not locate or inspect the fault.
 
-**Withdrawn framing.** Earlier notes said "delayed corrosion from the immersion". That was an overstatement. The dunk was short, and the insult was the charge with a wet port.
+The readings still tracked changes in temperature. This indicates that the sensor and converter could still respond. A physical inspection can help distinguish corrosion, contamination, and other connection faults.
 
-**Consequences for repair.** A reseat or cleaning can fail again, because the contamination can spread. A microscope inspection for corrosion or dendrites on the `north_therm` net is the definitive test. A desiccant test is a cheaper discriminator. For this test, keep the phone with silica gel or calcium chloride for 24 to 48 hours. Then compare the spike count with a normal cold day.
+## Soak test after the patch
+
+On 21 September 2026, `north_therm` read 54.82 °C for two samples. `VIRTUAL-SKIN` stayed at 36.2 °C with status 0. A similar spike on the stock build had produced status 5. The test showed that the patched formula did not turn this false spike into a heat warning.
 
 ## Remaining risks after the patch
 
-- **`cam_therm` now carries the weight of `north_therm`** (0.9 in `VIRTUAL-SKIN-SUB-4`). If the fault spreads to `cam_therm`, false spikes and shutdowns come back.
-- **`quiet_therm` has the only kernel critical trip on the board (57 °C).** The kernel shuts the phone down at that trip, and the JSON patch cannot stop it. A fix needs an edited `dtbo` image (`avbroot --replace dtbo`).
-- **A sensor that fails cold hides real heat.** This makes the overheating protection weaker.
+- The patched `VIRTUAL-SKIN-SUB-4` relies more on `cam_therm`. An inaccurate reading from that sensor can cause a false warning or hide real heat.
+- `cam_therm` measures a different point. The soak test did not show that the new formula detects every real hot spot.
+- The stock kernel configuration examined for this report gave `quiet_therm` a critical trip at 57 °C. The vendor JSON patch does not change kernel trips.
 
 ## How to diagnose it again
 
-If the phone shows heat warnings, stutters or shutdowns, do these steps:
+Do not assume that a new heat warning is false. If the phone feels hot, stop using and charging it before you investigate.
 
-1. Connect the phone over adb.
+If the phone is cool and the symptoms recur:
+
+1. Connect the phone over ADB.
 2. Poll `adb shell dumpsys thermalservice` about once per second. Read the section "Current temperatures from HAL".
-3. Compare `north_therm`, `cam_therm` and `quiet_therm` with the other sensors.
-4. Read the boot reasons with `adb shell getprop persist.sys.boot.reason.history`. A thermal shutdown shows `shutdown,thermal`.
-5. Do not look for a cause in apps or load first.
+3. Compare `north_therm`, `cam_therm`, and `quiet_therm` with the other sensors.
+4. Read the boot reasons with `adb shell getprop persist.sys.boot.reason.history`. Look for `shutdown,thermal`.
 
-Notes:
-- `logcat` shows `pixel-thermal` raw-data lines only while a throttling loop is active.
-- adb without root cannot read the thermal sysfs files or `dmesg`. SELinux blocks them.
-- Once a month, do the same check to watch for spread of the fault.
+On the build used for the investigation, `logcat` showed `pixel-thermal` raw data during throttling. SELinux blocked unprivileged reads of thermal sysfs files and `dmesg`.

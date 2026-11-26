@@ -1,101 +1,108 @@
-# The fork z0xca/rooted-graphene
+# Operate the fork
 
-## Purpose
+This fork of [schnatterer/rooted-graphene](https://github.com/schnatterer/rooted-graphene) publishes rootless GrapheneOS updates for one Pixel 8 Pro (`husky`). The phone uses the fork's signing keys and receives updates through Custota. It does not use upstream's public OTA server.
 
-This fork of [schnatterer/rooted-graphene](https://github.com/schnatterer/rooted-graphene) builds rootless GrapheneOS OTAs for one Pixel 8 Pro (`husky`). Each OTA includes the `north_therm` fix. Upstream pins the same patcher commit and tool versions as the first build.
+## Source of truth
 
-## Changes from upstream
-
-| Change | Files |
+| Topic | File |
 |---|---|
-| The build verifies the downloaded OTA with the GrapheneOS keys (`patch.py --verify-public-key-avb`, `--verify-cert-ota`) | `rooted-ota.sh`, `trust/husky-avb_pkmd.bin`, `trust/grapheneos-ota.crt` |
-| The build verifies each patched OTA with our public keys (`avbroot ota verify`) before the release | `rooted-ota.sh`, `trust/signing-avb_pkmd.bin`, `trust/signing-ota.crt` |
-| The build applies the thermal module by default. `NORTH_THERM_REWIRE=false` turns it off | `rooted-ota.sh`, `modules/norththermrewire.py`, `patches/my-avbroot-setup-norththermrewire.patch` |
-| A schedule builds husky rootless every 6 hours (`23 */6 * * *`, UTC) | `.github/workflows/release-husky.yaml` |
-| The release workflow accepts `skip-rooted` from a calling workflow, and its default device is `husky` | `.github/workflows/release-single.yaml` |
-| The release workflow pins `actions/checkout` to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) | `.github/workflows/release-single.yaml` |
+| Release channel, tool versions, patcher commit, and build defaults | [`rooted-ota.sh`](../rooted-ota.sh) |
+| Schedule and rootless Husky inputs | [`release-husky.yaml`](../.github/workflows/release-husky.yaml) |
+| Release job, manual inputs, signing secrets, and checkout pin | [`release-single.yaml`](../.github/workflows/release-single.yaml) |
+| Sensor rewrite and patcher registration | [`norththermrewire.py`](../modules/norththermrewire.py) and the [registration patch](../patches/my-avbroot-setup-norththermrewire.patch) |
 
-`trust/README.md` gives the provenance of each key file. The GrapheneOS AVB key matches the Pixel 8 Pro hash published at grapheneos.org/install/cli. The GrapheneOS OTA certificate is the only certificate in the `otacerts.zip` of a stock husky build.
+The thermal module uses `cam_therm` in place of `north_therm` in the affected formulas. It does not repair the sensor or remove the thermal shutdown thresholds. `NORTH_THERM_REWIRE=false` turns off the rewrite for a local build. See the [fault report](north-therm-fault.md) for the diagnosis and remaining risks.
 
-The module file has the same code tokens as the version of the first build. Only its comments and messages changed (Simplified Technical English). Its output on the stock thermal files is byte-identical. Its SHA-256 is therefore different from the earlier `9d57cea2…`.
+## Release setup
 
-## GitHub configuration
+- Store the signing keys, OTA certificate, and passphrases in the repository secrets named by the release job.
+- Back up both signing keys outside GitHub.
+- Enable **Release husky** and **Release single device**. Leave **Renovate** disabled.
+- Set GitHub Pages to serve the root of `gh-pages`. This branch holds the update feed, not the build source.
+- Use the `rootless/` directory on this repository's Pages site as the Custota server URL. Custota reads `rootless/husky.json` for this phone.
+- Keep the stock GrapheneOS system updater disabled on this installation. Use Custota for the fork's updates.
 
-| Item | Value |
-|---|---|
-| Secrets | `KEY_AVB_BASE64`, `KEY_OTA_BASE64`, `CERT_OTA_BASE64`, `PASSPHRASE_AVB`, `PASSPHRASE_OTA` |
-| Branches | `main`, and `gh-pages` (orphan branch, the OTA server data) |
-| GitHub Pages | from `gh-pages`, root folder |
-| Workflows | "Release husky" and "Release single device" on. "Renovate" off (it has no `RENOVATE_TOKEN`) |
-| Custota update file | `rootless/husky.json` on the GitHub Pages site of this repository |
+## Normal updates
 
-The thermal fix is on by default in `rooted-ota.sh`. An earlier version read it from a repository variable. When that variable was missing, a push build on 24 September built without the fix. No release was made.
+1. The Husky release job reads the latest version from the configured GrapheneOS channel.
+2. The patcher verifies the input OTA against the pinned GrapheneOS keys. Then it applies the thermal module, Custota, and OEMUnlockOnBoot and signs the OTA.
+3. The build verifies the new or cached OTA ZIP against the fork's public keys.
+4. The release job uploads the ZIP and its `.csig`. It then updates the Custota feed on `gh-pages`.
 
-## Release flow
+The scheduled run normally skips a device, version, and flavor with a matching release asset. A fork code change usually reaches the phone with the next GrapheneOS release.
 
-1. The schedule starts "Release husky". GitHub sometimes drops a scheduled run. The 06:23 UTC run on 24 September never started.
-2. The script reads `https://releases.grapheneos.org/husky-stable-security-preview`.
-3. If a release asset for that version already exists, the run stops. Code changes therefore reach the phone with the next GrapheneOS release.
-4. The patcher verifies the download with the GrapheneOS keys, applies Custota, OEMUnlockOnBoot and the thermal module, and signs the result.
-5. `avbroot ota verify` checks each new or cached ZIP against the public keys in `trust/signing-*`.
-6. The script creates the GitHub release, uploads the zip and the `.csig`, and commits `rootless/husky.json` to `gh-pages`.
+### Check for a partial release
 
-**First release (24 September, 11:57 UTC).** Commit `8dcff4b`. Asset `husky-2026091901-8dcff4b-rootless.zip`, 1537721612 bytes, `vbmeta` digest `781d215f…`. A download of the published zip was verified. `avbroot ota verify` with `trust/signing-*` passed, the `.csig` was valid, and both thermal files were byte-identical to the verified build.
+A published ZIP does not mean that Custota can see the update. The next scheduled run can skip that version instead of repairing the feed.
 
-**Rebuilds.** Two builds of the same version are not bit-identical. After a forced rebuild, Custota therefore offers the same version again as an update.
+If a release run fails:
 
-**Download host.** The GitHub release host answers explicit byte ranges with 206. It answers suffix ranges (`bytes=-N`) with 501. Custota and `update_engine` use explicit ranges, so this has no effect.
+1. Read the Actions log to find the failed step.
+2. Check that the release contains the ZIP and its matching `.csig`.
+3. Check that the live `rootless/husky.json` points to both files.
 
-**Known behavior of upstream.** Push builds run `. rooted-ota.sh && createRootedOta && createOtaServerData`. Bash ignores `errexit` inside a function that is not the last command of an `&&` list. So a failure inside `createRootedOta`, a failed verification included, does not stop a push build. The release path `. rooted-ota.sh && createAndReleaseRootedOta` stops at the first failure, so no release can pass a failed verification. An attempt to change the push line broke push builds and was reverted. Push builds depend on a fake token whose API error is ignored.
+## Publish a change before the next GrapheneOS release
 
-## Forced rebuild
+`force-build` does not overwrite release assets. If the release already has an asset with the same name, the upload can fail.
 
-To publish a change before the next GrapheneOS release, do these steps:
-
-1. In the Actions tab, run "Release single device".
+1. In Actions, open **Release single device**.
 2. Set the device to `husky`.
-3. Tick "skip rooted", "force build" and "force OTA server upload".
-4. On the phone, install the update from Custota.
+3. Select `skip-rooted`, `force-build`, and `force-ota-server-upload`.
+4. Leave `skip-rootless` and `skip-release` clear.
+5. Run the workflow.
+6. Check that the published `rootless/husky.json` points to the intended ZIP and `.csig`.
+7. If the feed points to both files, install the update in Custota.
 
-## Maintenance
+## Maintenance and local tests
 
-- Once a month, click "Sync fork" on GitHub. This brings the version updates that upstream Renovate makes. It also keeps the repository active. GitHub turns off schedules after 60 days with no activity.
-- For an email at each release, set Watch, then Custom, then Releases.
-- Once a month, do the sensor check in [north-therm-fault.md](north-therm-fault.md).
-- If you edit files in this repository by hand, turn off "trim trailing whitespace" and format-on-save. The upstream files have trailing spaces, and an editor that removes them makes merge conflicts.
+- Sync from upstream regularly. If the patcher pin changes, verify that it still registers the module and produces the intended vendor edits.
+- Check that scheduled runs still occur. GitHub can [delay, drop, or disable schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+- If symptoms return, use the [sensor checks](north-therm-fault.md#how-to-diagnose-it-again).
 
-## What erases the phone
+Push and pull request jobs do not publish releases. Their build-only command puts `createRootedOta` on the left of `&&`. Bash can ignore `errexit` inside that function, so a green run does not prove that every verification passed.
 
-- A normal update does not erase data. The phone installs to the other slot. If that slot does not boot, the phone returns to the old slot.
-- Adding or removing a module, a sync from upstream, and a change between rootless and Magisk all come as normal updates.
-- **A change or loss of `avb.key`** needs a bootloader unlock, and the unlock erases the phone.
-- **A loss of `ota.key`** stops all updates until an unlock and a reflash.
+### Test a build locally
 
-## OEM unlocking and OEMUnlockOnBoot
+Use a disposable checkout with temporary signing keys. Do not use release credentials or publish test assets from that checkout.
 
-- Each fork build includes OEMUnlockOnBoot. It turns OEM unlocking on again at each boot. This prevents the only state that makes a brick: bootloader locked, OS does not boot, and unlock not allowed.
-- The costs of OEM unlocking are physical. A person with the phone can unlock the bootloader without the PIN. The unlock erases all data first, and the data is encrypted. A thief can erase and reuse the phone. GrapheneOS has no Google factory-reset protection. An "evil maid" can install a different OS signed with a different key. Then the data is gone, and the boot screen shows a different fingerprint.
+1. Replace `trust/signing-avb_pkmd.bin` and `trust/signing-ota.crt` with the test public files. Leave the GrapheneOS input trust anchors unchanged.
+2. Leave `GITHUB_REPO` unset to skip the release lookup.
+3. Leave `MAGISK_PREINIT_DEVICE` unset for a rootless build.
+4. If you need to inspect the output after the build, set `SKIP_CLEANUP=true`.
+5. Run `DEVICE_ID=husky bash -c 'source ./rooted-ota.sh; createRootedOta'`. Do not put `createRootedOta` on the left of `&&`.
+6. Remove the test checkout after the test.
+
+## Trust and recovery
+
+The [`trust/`](../trust/) directory contains public files only. The build uses the GrapheneOS pins for the input OTA and the fork's pins for the output.
+
+- **Stock AVB key:** Compare the SHA-256 of `husky-avb_pkmd.bin` with the Pixel 8 Pro fingerprint in the [GrapheneOS install guide](https://grapheneos.org/install/cli).
+- **Stock OTA certificate:** Verify `grapheneos-ota.crt` against the certificate in `/system/etc/security/otacerts.zip` from a stock build whose `vbmeta` verifies against that AVB key.
+- **Fork keys:** Compare the SHA-256 of `signing-avb_pkmd.bin` with the fingerprint on the phone's yellow boot screen. Compare `signing-ota.crt` with the OTA certificate in the release secret `CERT_OTA_BASE64`.
+
+If GrapheneOS rotates a key, verify the replacement independently before changing the pin. Do not trust a new key only because it came with the download.
+
+A normal OTA keeps user data and uses the other slot. For a fresh install or recovery:
+
+1. Before flashing, check that the target build does not violate rollback protection. Compare the actual builds, not just their stable or security preview labels.
+2. Verify that the flashed `vendor` image contains the thermal rewrite. A successful boot does not prove that the patch is present.
+3. Before relocking, verify that both slots contain bootable images signed with the fork's AVB key. A successful boot while unlocked does not verify the signing key.
+4. Before relocking, verify that OEM unlocking remains allowed.
+
+**CAUTION:** Keep backups of `avb.key`, `ota.key`, and their passphrases. Without the original keys, this build path cannot keep signing updates for the installation. A migration to new keys requires an unlock and a reflash, which erase user data.
+
+Keep OEM unlocking allowed. If neither slot boots and OEM unlocking is disabled, the phone can be unrecoverable. [OEMUnlockOnBoot](https://github.com/chenxiaolong/OEMUnlockOnBoot) reduces this risk after a successful boot. It cannot help if the OS does not start.
+
+With OEM unlocking allowed, someone with physical access can unlock and reflash the phone. Unlocking erases user data. It does not grant access to the existing encrypted data.
+
+On the first patched installation, Auditor pairing failed with `invalid verified boot key fingerprint`.
 
 ## Rules for AI assistants in this repository
 
-- Do not commit. Do not push. A human reviews every change and writes every commit message.
+- Do not commit or push. A human reviews every change and writes every commit message.
 - Build and verify each change, then show the diff.
 - Write the smallest possible diff. Prefer community-maintained tools and upstream mechanisms. The thermal module is the only accepted AI-written logic.
 - Pin GitHub Actions in the release workflow to commit SHAs. Keep the disabled Renovate workflow unchanged from upstream.
 - Write prose in Simplified Technical English.
 - Give plain commands, not wrapper scripts.
 - Base suggestions on what the community ships or on a stated problem.
-
-## Local test method
-
-On a machine with rootless Podman and no subordinate UIDs, use these steps to run `patchOTAs` locally:
-
-1. Set `CONTAINERS_STORAGE_CONF` to a file with the `vfs` driver and `ignore_chown_errors = "true"`.
-2. Set `CONTAINERS_REGISTRIES_CONF` to a file with `unqualified-search-registries = ["docker.io"]`.
-3. Put a test `docker` shim first in `PATH`. It runs `podman` and replaces the `chown -R` in the container command with `true`.
-4. Run inside `nix-shell -p unzip jq`.
-5. Unset `TMPDIR`, `TMP`, `TEMP` and `TEMPDIR`. The script copies the host environment into the container.
-6. Use temporary keys. Do not use the real keys.
-7. Call `. rooted-ota.sh; createRootedOta`. Do not use `&&`, or failures are ignored.
-
-Results on 24 September: the output thermal files were byte-identical to the verified build. A zip signed with our key, presented as a GrapheneOS zip, was refused.

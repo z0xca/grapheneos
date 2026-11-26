@@ -3,7 +3,7 @@ rooted-graphene
 
 > [!IMPORTANT]
 > This fork is for a Pixel 8 Pro (`husky`) with a faulty `north_therm` sensor.
-> [Fork instructins](docs/fork.md) are stored separatly.
+> For this phone, use the [fork instructions](docs/fork.md), not the upstream OTA server or installation instructions.
 
 GrapheneOS over the air updates (OTAs) patched with Magisk allowing for AVB and locked bootloader *and* root access.  
 Can be upgraded over the air using [Custota](https://github.com/chenxiaolong/Custota) and its own OTA server.  
