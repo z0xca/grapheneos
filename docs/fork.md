@@ -13,7 +13,7 @@ This fork of [schnatterer/rooted-graphene](https://github.com/schnatterer/rooted
 | The build applies the thermal module by default. `NORTH_THERM_REWIRE=false` turns it off | `rooted-ota.sh`, `modules/norththermrewire.py`, `patches/my-avbroot-setup-norththermrewire.patch` |
 | A schedule builds husky rootless every 6 hours (`23 */6 * * *`, UTC) | `.github/workflows/release-husky.yaml` |
 | The release workflow accepts `skip-rooted` from a calling workflow, and its default device is `husky` | `.github/workflows/release-single.yaml` |
-| `actions/checkout` is pinned to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) | both workflows |
+| The release workflow pins `actions/checkout` to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) | `.github/workflows/release-single.yaml` |
 
 `trust/README.md` gives the provenance of each key file. The GrapheneOS AVB key matches the Pixel 8 Pro hash published at grapheneos.org/install/cli. The GrapheneOS OTA certificate is the only certificate in the `otacerts.zip` of a stock husky build.
 
@@ -37,7 +37,7 @@ The thermal fix is on by default in `rooted-ota.sh`. An earlier version read it 
 2. The script reads `https://releases.grapheneos.org/husky-stable-security-preview`.
 3. If a release asset for that version already exists, the run stops. Code changes therefore reach the phone with the next GrapheneOS release.
 4. The patcher verifies the download with the GrapheneOS keys, applies Custota, OEMUnlockOnBoot and the thermal module, and signs the result.
-5. `avbroot ota verify` verifies the result with `trust/signing-*`.
+5. `avbroot ota verify` checks each new or cached ZIP against the public keys in `trust/signing-*`.
 6. The script creates the GitHub release, uploads the zip and the `.csig`, and commits `rootless/husky.json` to `gh-pages`.
 
 **First release (24 September, 11:57 UTC).** Commit `8dcff4b`. Asset `husky-2026091901-8dcff4b-rootless.zip`, 1537721612 bytes, `vbmeta` digest `781d215f…`. A download of the published zip was verified. `avbroot ota verify` with `trust/signing-*` passed, the `.csig` was valid, and both thermal files were byte-identical to the verified build.
@@ -81,7 +81,7 @@ To publish a change before the next GrapheneOS release, do these steps:
 - Do not commit. Do not push. A human reviews every change and writes every commit message.
 - Build and verify each change, then show the diff.
 - Write the smallest possible diff. Prefer community-maintained tools and upstream mechanisms. The thermal module is the only accepted AI-written logic.
-- Pin GitHub Actions to commit SHAs.
+- Pin GitHub Actions in the release workflow to commit SHAs. Keep the disabled Renovate workflow unchanged from upstream.
 - Write prose in Simplified Technical English.
 - Give plain commands, not wrapper scripts.
 - Base suggestions on what the community ships or on a stated problem.

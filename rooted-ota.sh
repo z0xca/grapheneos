@@ -405,11 +405,11 @@ function patchOTAs() {
             .tmp/my-avbroot-setup/patch.py ${args[*]} && \
         chown -R $(id -u):$(id -g) .tmp"
 
-      # Output must be signed by our keys, pinned in trust/ independently of the secrets
-      .tmp/avbroot ota verify --input "$targetFile" --public-key-avb trust/signing-avb_pkmd.bin --cert-ota trust/signing-ota.crt
       printGreen "Finished patching file ${targetFile}"
     fi
-    
+
+    # Verify both new and cached OTAs against our pinned public keys.
+    .tmp/avbroot ota verify --input "$targetFile" --public-key-avb trust/signing-avb_pkmd.bin --cert-ota trust/signing-ota.crt
   done
 }
 
